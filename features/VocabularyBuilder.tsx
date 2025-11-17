@@ -1,16 +1,49 @@
 
-import React, { useState, useCallback } from 'react';
-import { getWordInfo } from '../services/geminiService';
+import React, { useState, useCallback, useRef } from 'react';
+import { getWordInfo, getPronunciation } from '../services/geminiService';
 import type { VocabularyInfo } from '../types';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Card from '../components/Card';
-import { BookOpenIcon } from '../components/icons';
+import { BookOpenIcon, SpeakerWaveIcon } from '../components/icons';
+
+// --- Audio Utility Functions ---
+function decode(base64: string) {
+  const binaryString = atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function decodeAudioData(
+  data: Uint8Array,
+  ctx: AudioContext,
+  sampleRate: number,
+  numChannels: number,
+): Promise<AudioBuffer> {
+  const dataInt16 = new Int16Array(data.buffer);
+  const frameCount = dataInt16.length / numChannels;
+  const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+
+  for (let channel = 0; channel < numChannels; channel++) {
+    const channelData = buffer.getChannelData(channel);
+    for (let i = 0; i < frameCount; i++) {
+      channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
+    }
+  }
+  return buffer;
+}
+// --------------------------------
 
 const VocabularyBuilder: React.FC = () => {
   const [word, setWord] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<VocabularyInfo | null>(null);
+  const [audioData, setAudioData] = useState<string | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
@@ -21,16 +54,43 @@ const VocabularyBuilder: React.FC = () => {
     setLoading(true);
     setError(null);
     setResult(null);
+    setAudioData(null);
     try {
-      const data = await getWordInfo(word);
-      setResult(data);
+      const [info, audio] = await Promise.all([
+        getWordInfo(word),
+        getPronunciation(word)
+      ]);
+      setResult(info);
+      setAudioData(audio);
     } catch (err) {
-      setError('Failed to fetch word information. Please try again.');
+      setError('Failed to fetch word information or pronunciation. Please try again.');
       console.error(err);
     } finally {
       setLoading(false);
     }
   }, [word]);
+
+  const handlePlayAudio = useCallback(async () => {
+    if (!audioData) return;
+    
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const audioContext = audioContextRef.current;
+      
+      const decodedBytes = decode(audioData);
+      const audioBuffer = await decodeAudioData(decodedBytes, audioContext, 24000, 1);
+      
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+      source.start();
+    } catch (err) {
+        console.error("Failed to play audio:", err);
+        setError("Could not play the audio pronunciation.");
+    }
+  }, [audioData]);
 
   return (
     <div className="h-full flex flex-col gap-4">
@@ -57,7 +117,18 @@ const VocabularyBuilder: React.FC = () => {
       
       {result && (
         <Card className="flex-grow animate-fade-in">
-          <h2 className="text-3xl font-bold capitalize text-blue-600 dark:text-blue-400 mb-4">{result.word}</h2>
+          <div className="flex items-center gap-3 mb-4">
+            <h2 className="text-3xl font-bold capitalize text-blue-600 dark:text-blue-400">{result.word}</h2>
+            {audioData && (
+              <button 
+                onClick={handlePlayAudio}
+                className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                aria-label="Play pronunciation"
+              >
+                <SpeakerWaveIcon className="w-6 h-6 text-blue-500" />
+              </button>
+            )}
+          </div>
           
           <div className="space-y-6">
             <div>

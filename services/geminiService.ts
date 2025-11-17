@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type, Chat } from "@google/genai";
+import { GoogleGenAI, Type, Chat, Modality } from "@google/genai";
 import type { VocabularyInfo, GrammarCorrection } from '../types';
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -83,6 +83,29 @@ export const getStory = async (prompt: string, level: string): Promise<string> =
   });
 
   return response.text;
+};
+
+export const getPronunciation = async (word: string): Promise<string> => {
+  const prompt = `Say the word: ${word}`;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash-preview-tts",
+    contents: [{ parts: [{ text: prompt }] }],
+    config: {
+      responseModalities: [Modality.AUDIO],
+      speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' },
+          },
+      },
+    },
+  });
+
+  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!base64Audio) {
+    throw new Error("No audio data received from API.");
+  }
+  return base64Audio;
 };
 
 export const createConversation = (): Chat => {
